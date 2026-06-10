@@ -16,6 +16,11 @@ services:
       # land under /app/.local for the odysseus user. Persist them so a
       # container recreate does not silently remove installed serve engines.
       - ./data/local:/app/.local:z
+      # Persist npm/npx package cache and Playwright browser binaries so the
+      # built-in Browser MCP server (npx @playwright/mcp) survives container
+      # recreates/restarts instead of needing reinstall every time.
+      - ./data/npm-cache:/app/.npm:z
+      - ./data/ms-playwright:/app/.cache/ms-playwright:z
     extra_hosts:
       # Lets the container reach local services on the Docker host, including
       # Ollama at http://host.docker.internal:11434.
