@@ -606,6 +606,20 @@ def _uses_max_completion_tokens(model: str) -> bool:
     m = model.lower()
     return any(m.startswith(p) or f"/{p}" in m for p in _MAX_COMPLETION_TOKENS_MODELS)
 
+# Groq enforces a hard cap on `max_tokens`/`max_completion_tokens` (currently
+# 8192) that is independent of — and often much smaller than — a model's
+# context window. Callers (e.g. skill-audit judges) sometimes request a
+# generous budget like 32768 to give reasoning models room to think; on Groq
+# that triggers "max_tokens must be less than or equal to 8192" (HTTP 400).
+# Clamp here so every caller gets a working request instead of a hard error.
+GROQ_MAX_COMPLETION_TOKENS = 8192
+
+def _clamp_max_tokens(provider: str, max_tokens: int) -> int:
+    """Clamp an output-token budget to provider-imposed hard limits."""
+    if provider == "groq" and max_tokens and max_tokens > GROQ_MAX_COMPLETION_TOKENS:
+        return GROQ_MAX_COMPLETION_TOKENS
+    return max_tokens
+
 # OpenAI reasoning models (o1, o3, o4, gpt-5 families) only accept the default
 # temperature. Sending any explicit value — even 0.0 — returns HTTP 400
 # ("Only the default (1) value is supported"). That otherwise breaks chat when a
@@ -1150,7 +1164,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
             payload.pop("temperature", None)
         if max_tokens and max_tokens > 0:
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
-            payload[tok_key] = max_tokens
+            payload[tok_key] = _clamp_max_tokens(provider, max_tokens)
     try:
         note_model_activity(target_url, model)
         r = httpx.post(target_url, headers=h, json=payload, timeout=timeout)
@@ -1343,7 +1357,7 @@ async def llm_call_async(
             payload.pop("temperature", None)
         if max_tokens and max_tokens > 0:
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
-            payload[tok_key] = max_tokens
+            payload[tok_key] = _clamp_max_tokens(provider, max_tokens)
 
     if _is_host_dead(target_url):
         raise HTTPException(503, f"Upstream {_host_key(target_url)} marked unreachable (cooldown active)")
@@ -1458,7 +1472,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             payload["stream_options"] = {"include_usage": True}
         if max_tokens and max_tokens > 0:
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
-            payload[tok_key] = max_tokens
+            payload[tok_key] = _clamp_max_tokens(provider, max_tokens)
         if tools:
             payload["tools"] = tools
         h = _provider_headers(provider, headers)
